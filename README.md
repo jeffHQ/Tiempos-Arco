@@ -1,6 +1,6 @@
-# Simulador de Tiempos de Arco para Transporte Público
+# Simulador de Tiempos de Arco para linea 305
 
-Este proyecto simula tiempos de viaje para una semana completa de líneas de transporte público usando un modelo de Machine Learning entrenado y lookup tables livianas optimizadas.
+Este proyecto simula tiempos de viaje para una semana completa de la linea 305 del corredor azul usando un modelo de Machine Learning entrenado y lookup tables livianas optimizadas.
 
 ## Descripción
 
@@ -30,11 +30,19 @@ El script `simulacion_horarios.py` genera simulaciones completas de tiempos de v
 ## Instalación
 
 1. Clonar o descargar el repositorio
-2. Instalar las dependencias:
+2. Instalar las dependencias usando `requirements.txt`:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   
+   O instalar manualmente:
    ```bash
    pip install pandas numpy tqdm pyarrow
    ```
+
 3. Asegurarse de que los archivos de modelos y rutas estén en las carpetas correspondientes
+
+**Nota**: Si el modelo entrenado utiliza una librería específica de Machine Learning (LightGBM, XGBoost, scikit-learn, etc.), asegúrate de instalar la librería correspondiente. Revisa los comentarios en `requirements.txt` para más detalles.
 
 ## Uso
 
@@ -216,6 +224,7 @@ simulador_tiempos_arco/
 ├── simulacion_horarios.py       # Script principal de simulación
 ├── exploracion_resultados.ipynb # Notebook para analizar resultados
 ├── README.md                     # Este archivo
+├── requirements.txt              # Dependencias del proyecto
 ├── .gitignore                    # Archivos excluidos de Git
 ├── modelos/                      # Modelos y lookup tables
 │   ├── mejor_modelo.pkl
@@ -244,28 +253,4 @@ simulador_tiempos_arco/
 ```
 
 **Nota**: Los archivos en `modelos/` (`.pkl`, `.parquet`) y `resultados/` (`.csv`, `.xlsx`) están excluidos del control de versiones por su tamaño. Solo se versionan los archivos de código y configuración.
-
-## Control de Versiones
-
-Este proyecto utiliza Git para el control de versiones. Los siguientes tipos de archivos están excluidos del repositorio (ver `.gitignore`):
-- Modelos entrenados (`.pkl`, `.parquet`)
-- Resultados generados (`.csv`, `.xlsx`)
-- Logs (`.log`)
-- Archivos temporales y de sistema
-
-## Franjas Horarias
-
-El sistema clasifica los tiempos según las siguientes franjas horarias:
-- **PicoManana**: 6:00 - 9:00
-- **ValleManana**: 9:00 - 12:00
-- **Mediodia**: 12:00 - 14:00
-- **ValleTarde**: 14:00 - 17:00
-- **PicoTarde**: 17:00 - 21:00
-- **Noche**: 21:00 - 6:00
-
-**Importante**: La franja se determina según la **hora de inicio** del arco, no la hora de llegada. Esto significa que un arco que comienza a las 20:54 se clasifica como "PicoTarde" aunque termine después de las 21:00.
-
-## Contacto
-
-Para preguntas o problemas, revisa el log de simulación (`simulacion.log`) o los mensajes de error en consola.
 
