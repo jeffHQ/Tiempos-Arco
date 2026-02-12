@@ -1,6 +1,6 @@
-# Script de Simulación de Horarios de Transporte
+# Simulador de Tiempos de Arco para Transporte Público
 
-Este script simula tiempos de viaje para una semana completa de una línea de transporte usando un modelo de ML entrenado y lookup tables livianas.
+Este proyecto simula tiempos de viaje para una semana completa de líneas de transporte público usando un modelo de Machine Learning entrenado y lookup tables livianas optimizadas.
 
 ## Descripción
 
@@ -11,29 +11,36 @@ El script `simulacion_horarios.py` genera simulaciones completas de tiempos de v
 - **Ambos sentidos**: Ida y vuelta de la línea
 - **Lookup tables livianas**: Usa archivos Parquet optimizados en lugar de cargar el dataset histórico completo
 - **Predicciones arco por arco**: Simula cada arco de la ruta usando el modelo de ML
+- **Franjas horarias**: Clasifica los tiempos según franjas (PicoManana, ValleManana, Mediodia, ValleTarde, PicoTarde, Noche)
 
 ## Requisitos
 
 - Python 3.7+
 - Librerías: pandas, numpy, tqdm, pickle, pyarrow (para Parquet)
-- Modelo entrenado: `../modelos/mejor_modelo.pkl`
+- Modelo entrenado: `modelos/mejor_modelo.pkl`
 - Lookup tables: 
-  - `../modelos/arco_stats.parquet`
-  - `../modelos/arco_franja_stats.parquet`
-  - `../modelos/arco_dia_stats.parquet`
-- Feriados: `../modelos/feriados.pkl`
-- Rutas: Archivos CSV en `../datos/rutas/` con formato `linea_{numero}_{sentido}.csv`
+  - `modelos/arco_stats.parquet`
+  - `modelos/arco_franja_stats.parquet`
+  - `modelos/arco_dia_stats.parquet`
+- Feriados: `modelos/feriados.pkl`
+- Rutas: Archivos CSV en `rutas/` con formato `linea_{numero}_{sentido}.csv`
+  - `sentido = 1` para ida
+  - `sentido = 2` para vuelta
 
 ## Instalación
 
-No requiere instalación adicional si ya tienes el entorno configurado para el proyecto de predicción ETA.
+1. Clonar o descargar el repositorio
+2. Instalar las dependencias:
+   ```bash
+   pip install pandas numpy tqdm pyarrow
+   ```
+3. Asegurarse de que los archivos de modelos y rutas estén en las carpetas correspondientes
 
 ## Uso
 
 ### Ejecución básica
 
 ```bash
-cd simulacion
 python simulacion_horarios.py
 ```
 
@@ -53,9 +60,9 @@ HORA_INICIO = 4                     # Hora de inicio (04:00)
 HORA_FIN = 24                       # Hora de fin (incluye 00:00)
 ```
 
-**Nota**: El script busca automáticamente los archivos de ruta en `../datos/rutas/` con el formato:
-- `linea_{LINEA}_1.csv` (ida)
-- `linea_{LINEA}_2.csv` (vuelta)
+**Nota**: El script busca automáticamente los archivos de ruta en `rutas/` con el formato:
+- `linea_{LINEA}_1.csv` (ida, sentido = 1)
+- `linea_{LINEA}_2.csv` (vuelta, sentido = 2)
 
 Cada archivo debe contener una columna `arco_id` con los identificadores de los arcos en orden.
 
@@ -128,32 +135,29 @@ El proyecto incluye `exploracion_resultados.ipynb` para analizar y visualizar lo
 ## Ejemplo de Uso
 
 ```bash
-# 1. Navegar a la carpeta de simulación
-cd simulacion
-
-# 2. (Opcional) Editar parámetros en simulacion_horarios.py:
+# 1. (Opcional) Editar parámetros en simulacion_horarios.py:
 #    - LINEA = 305
 #    - ANIO = 2026
 #    - MES = 2
 #    - NUM_SEMANA = 4
 
-# 3. Ejecutar el script
+# 2. Ejecutar el script
 python simulacion_horarios.py
 
-# 4. Esperar a que complete (puede tardar varios minutos)
+# 3. Esperar a que complete (puede tardar varios minutos)
 # El script mostrará una barra de progreso con el avance
 
-# 5. Revisar resultados en:
-#    - resultados/resumen_viajes.csv
-#    - resultados/detallado_viajes.csv
-#    - resultados/programacion_dia_habil.csv
-#    - resultados/detallado_dia_habil.csv
-#    - resultados/programacion_sabado.csv
-#    - resultados/detallado_sabado.csv
-#    - resultados/programacion_domingo.csv
-#    - resultados/detallado_domingo.csv
+# 4. Revisar resultados en la carpeta resultados/:
+#    - resumen_viajes.csv
+#    - detallado_viajes.csv
+#    - programacion_dia_habil.csv
+#    - detallado_dia_habil.csv
+#    - programacion_sabado.csv
+#    - detallado_sabado.csv
+#    - programacion_domingo.csv
+#    - detallado_domingo.csv
 
-# 6. Explorar resultados con el notebook:
+# 5. Explorar resultados con el notebook:
 #    jupyter notebook exploracion_resultados.ipynb
 ```
 
@@ -182,22 +186,22 @@ El script genera un archivo `simulacion.log` con información detallada del proc
 ## Solución de Problemas
 
 ### Error: "Arco '{arco}' no encontrado en lookup tables"
-- Verifica que los archivos de ruta existan: `../datos/rutas/linea_{LINEA}_1.csv` y `linea_{LINEA}_2.csv`
+- Verifica que los archivos de ruta existan: `rutas/linea_{LINEA}_1.csv` y `rutas/linea_{LINEA}_2.csv`
 - Verifica que los `arco_id` en los CSVs coincidan exactamente con los de las lookup tables
 - Revisa que los archivos Parquet de lookup tables estén actualizados
 
 ### Error: "Modelo no encontrado" o "Lookup table no encontrada"
 - Verifica que existan los archivos:
-  - `../modelos/mejor_modelo.pkl`
-  - `../modelos/arco_stats.parquet`
-  - `../modelos/arco_franja_stats.parquet`
-  - `../modelos/arco_dia_stats.parquet`
-  - `../modelos/feriados.pkl`
+  - `modelos/mejor_modelo.pkl`
+  - `modelos/arco_stats.parquet`
+  - `modelos/arco_franja_stats.parquet`
+  - `modelos/arco_dia_stats.parquet`
+  - `modelos/feriados.pkl`
 
 ### Error: "Archivo de ruta no encontrado"
-- Verifica que existan los archivos en `../datos/rutas/`:
-  - `linea_{LINEA}_1.csv` (ida)
-  - `linea_{LINEA}_2.csv` (vuelta)
+- Verifica que existan los archivos en `rutas/`:
+  - `linea_{LINEA}_1.csv` (ida, sentido = 1)
+  - `linea_{LINEA}_2.csv` (vuelta, sentido = 2)
 - Los archivos deben tener una columna `arco_id` con los identificadores en orden
 
 ### Predicciones anómalas
@@ -208,10 +212,26 @@ El script genera un archivo `simulacion.log` con información detallada del proc
 ## Estructura del Proyecto
 
 ```
-simulacion/
-├── simulacion_horarios.py      # Script principal de simulación
-├── exploracion_resultados.ipynb  # Notebook para analizar resultados
-├── resultados/                  # Archivos CSV generados
+simulador_tiempos_arco/
+├── simulacion_horarios.py       # Script principal de simulación
+├── exploracion_resultados.ipynb # Notebook para analizar resultados
+├── README.md                     # Este archivo
+├── .gitignore                    # Archivos excluidos de Git
+├── modelos/                      # Modelos y lookup tables
+│   ├── mejor_modelo.pkl
+│   ├── arco_stats.parquet
+│   ├── arco_franja_stats.parquet
+│   ├── arco_dia_stats.parquet
+│   ├── feriados.pkl
+│   └── features_list.txt
+├── rutas/                        # Archivos CSV de rutas
+│   ├── linea_301_1.csv
+│   ├── linea_301_2.csv
+│   ├── linea_303_1.csv
+│   ├── linea_303_2.csv
+│   ├── linea_305_1.csv
+│   └── linea_305_2.csv
+├── resultados/                   # Archivos CSV generados (no versionados)
 │   ├── resumen_viajes.csv
 │   ├── detallado_viajes.csv
 │   ├── programacion_dia_habil.csv
@@ -220,9 +240,30 @@ simulacion/
 │   ├── detallado_sabado.csv
 │   ├── programacion_domingo.csv
 │   └── detallado_domingo.csv
-├── simulacion.log               # Log de ejecución
-└── README.md                     # Este archivo
+└── simulacion.log                # Log de ejecución (no versionado)
 ```
+
+**Nota**: Los archivos en `modelos/` (`.pkl`, `.parquet`) y `resultados/` (`.csv`, `.xlsx`) están excluidos del control de versiones por su tamaño. Solo se versionan los archivos de código y configuración.
+
+## Control de Versiones
+
+Este proyecto utiliza Git para el control de versiones. Los siguientes tipos de archivos están excluidos del repositorio (ver `.gitignore`):
+- Modelos entrenados (`.pkl`, `.parquet`)
+- Resultados generados (`.csv`, `.xlsx`)
+- Logs (`.log`)
+- Archivos temporales y de sistema
+
+## Franjas Horarias
+
+El sistema clasifica los tiempos según las siguientes franjas horarias:
+- **PicoManana**: 6:00 - 9:00
+- **ValleManana**: 9:00 - 12:00
+- **Mediodia**: 12:00 - 14:00
+- **ValleTarde**: 14:00 - 17:00
+- **PicoTarde**: 17:00 - 21:00
+- **Noche**: 21:00 - 6:00
+
+**Importante**: La franja se determina según la **hora de inicio** del arco, no la hora de llegada. Esto significa que un arco que comienza a las 20:54 se clasifica como "PicoTarde" aunque termine después de las 21:00.
 
 ## Contacto
 
