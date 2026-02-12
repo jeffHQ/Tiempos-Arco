@@ -559,18 +559,18 @@ def generar_detallado_viajes(df):
 def generar_programacion_dia_habil(df, arcos_ida, arcos_vuelta):
     """
     Archivos 3 y 4: programacion y detallado de dia habil generico.
-    Agrupa predicciones Lun-Vie por arco + franja, calcula P99,
-    reconstruye viajes usando P99 por franja.
+    Agrupa predicciones Lun-Vie por arco + hora exacta, calcula P99,
+    reconstruye viajes usando P99 por hora.
     """
     df_habil = df[df['tipo_dia'] == 'habil'].copy()
     if df_habil.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    # Calcular franja de cada arco segun su hora_inicio_decimal
-    df_habil['franja'] = df_habil['hora_inicio_decimal'].apply(clasificar_franja)
+    # Hora exacta de cada arco segun su hora_inicio_decimal
+    df_habil['hora'] = df_habil['hora_inicio_decimal'].astype(int)
 
-    # P99 por arco + franja + sentido
-    p99 = df_habil.groupby(['arco_id', 'franja', 'sentido']).agg(
+    # P99 por arco + hora + sentido
+    p99 = df_habil.groupby(['arco_id', 'hora', 'sentido']).agg(
         tiempo_arco_p99_seg=('tiempo_arco_seg', lambda x: np.percentile(x, 99))
     ).reset_index()
 
@@ -588,19 +588,19 @@ def generar_programacion_dia_habil(df, arcos_ida, arcos_vuelta):
 
             for i, arco_id in enumerate(arcos):
                 posicion = i + 1
-                franja = clasificar_franja(hora_actual)
+                hora_exacta = int(hora_actual)
 
-                # Buscar P99 para este arco + franja + sentido
+                # Buscar P99 para este arco + hora + sentido
                 mask = (
                     (p99['arco_id'] == arco_id)
-                    & (p99['franja'] == franja)
+                    & (p99['hora'] == hora_exacta)
                     & (p99['sentido'] == sentido_num)
                 )
                 match = p99[mask]
                 if not match.empty:
                     t_seg = float(match.iloc[0]['tiempo_arco_p99_seg'])
                 else:
-                    # Fallback: P99 del arco sin filtrar franja
+                    # Fallback: P99 del arco sin filtrar hora
                     mask2 = (p99['arco_id'] == arco_id) & (p99['sentido'] == sentido_num)
                     match2 = p99[mask2]
                     if not match2.empty:
@@ -619,7 +619,7 @@ def generar_programacion_dia_habil(df, arcos_ida, arcos_vuelta):
                     'hora_llegada': decimal_a_hhmm(hora_llegada),
                     'tiempo_arco_p99_seg': round(t_seg, 2),
                     'tiempo_arco_p99_min': round(t_seg / 60, 2),
-                    'franja': franja,
+                    'hora': hora_exacta,
                 })
 
                 tiempo_total += t_seg

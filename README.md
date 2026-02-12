@@ -11,12 +11,12 @@ El script `simulacion_horarios.py` genera simulaciones completas de tiempos de v
 - **Ambos sentidos**: Ida y vuelta de la línea
 - **Lookup tables livianas**: Usa archivos Parquet optimizados en lugar de cargar el dataset histórico completo
 - **Predicciones arco por arco**: Simula cada arco de la ruta usando el modelo de ML
-- **Franjas horarias**: Clasifica los tiempos según franjas (PicoManana, ValleManana, Mediodia, ValleTarde, PicoTarde, Noche)
+- **Franjas horarias**: Clasifica los tiempos según franjas (PicoManana, ValleManana, Mediodia, ValleTarde, PicoTarde, Noche) como features del modelo
 
 ## Requisitos
 
 - Python 3.7+
-- Librerías: pandas, numpy, tqdm, pickle, pyarrow (para Parquet)
+- Librerías: pandas, numpy, tqdm, pyarrow (para Parquet), xgboost
 - Modelo entrenado: `modelos/mejor_modelo.pkl`
 - Lookup tables: 
   - `modelos/arco_stats.parquet`
@@ -37,12 +37,10 @@ El script `simulacion_horarios.py` genera simulaciones completas de tiempos de v
    
    O instalar manualmente:
    ```bash
-   pip install pandas numpy tqdm pyarrow
+   pip install pandas numpy tqdm pyarrow xgboost
    ```
 
 3. Asegurarse de que los archivos de modelos y rutas estén en las carpetas correspondientes
-
-**Nota**: Si el modelo entrenado utiliza una librería específica de Machine Learning (LightGBM, XGBoost, scikit-learn, etc.), asegúrate de instalar la librería correspondiente. Revisa los comentarios en `requirements.txt` para más detalles.
 
 ## Uso
 
@@ -115,9 +113,9 @@ Detalle arco por arco de todos los viajes simulados:
 
 #### 3. `programacion_dia_habil.csv` y `detallado_dia_habil.csv`
 Programación y detalle para días hábiles (Lunes-Viernes):
-- **Programación**: Resumen de viajes usando **Percentil 99 (P99)** por franja horaria
-- **Detallado**: Desglose arco por arco con tiempos P99 por franja
-- Incluye columna `franja` (PicoManana, ValleManana, Mediodia, ValleTarde, PicoTarde, Noche)
+- **Programación**: Resumen de viajes usando **Percentil 99 (P99)** por hora exacta
+- **Detallado**: Desglose arco por arco con tiempos P99 por hora
+- Incluye columna `hora` (hora entera del arco, ej: 7, 8, 17)
 
 #### 4. `programacion_sabado.csv` y `detallado_sabado.csv`
 Programación y detalle para sábados:
@@ -187,7 +185,7 @@ El script genera un archivo `simulacion.log` con información detallada del proc
 
 4. **Tiempo de ejecución**: Depende del intervalo configurado y la cantidad de arcos. Para intervalo de 1 minuto (1200+ horarios) y ~40 arcos por sentido, puede tardar 30-60 minutos.
 
-5. **Día Hábil con P99**: Los días hábiles usan Percentil 99 por franja horaria para generar programaciones más conservadoras y robustas.
+5. **Día Hábil con P99**: Los días hábiles usan Percentil 99 por hora exacta (agrupado por arco + hora + sentido) para generar programaciones más conservadoras y robustas, reflejando las condiciones específicas de cada hora.
 
 6. **Fechas de simulación**: Las fechas se calculan automáticamente según la semana especificada del mes. Los feriados se detectan automáticamente y se generan archivos adicionales.
 
