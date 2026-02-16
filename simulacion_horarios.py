@@ -444,10 +444,9 @@ def generar_horarios_salida():
 
 def decimal_a_hhmm(hora_decimal):
     """Convierte hora decimal a formato HH:MM."""
-    hora_decimal = hora_decimal % 24
-    h = int(hora_decimal)
-    m = int((hora_decimal - h) * 60)
-    return f"{h:02d}:{m:02d}"
+    total_min = round((hora_decimal % 24) * 60)
+    h, m = divmod(total_min, 60)
+    return f"{int(h):02d}:{int(m):02d}"
 
 
 def simular_semana_completa(modelo, features, arco_stats, arco_franja_stats,

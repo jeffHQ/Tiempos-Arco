@@ -4,6 +4,14 @@ Este proyecto simula tiempos de viaje para una semana completa de la linea 305 d
 
 ## Descripción
 
+El modelo de predicción está entrenado con datos desde el 01-01-2024 hasta el 18-01-2026 para predecir los tiempos de arco entre paraderos. Este utiliza un modelo XGBoost para la predicción.
+
+**Características del modelo:**
+- Período de entrenamiento: 2 años y 18 días de datos históricos
+- Algoritmo: XGBoost (Extreme Gradient Boosting)
+- Métricas de evaluación: MAE: 40.09 seg (  0.67 min), RMSE: 67.18 seg (  1.12 min), R²: 0.4420
+- Tamaño del dataset: [número de registros] observaciones
+
 El script `simulacion_horarios.py` genera simulaciones completas de tiempos de viaje para una línea específica durante una semana completa, considerando:
 - **Semana completa**: Simula los 7 días de una semana específica (Lunes a Domingo)
 - **Tipos de día**: Hábil (Lunes-Viernes), Sábado y Domingo
