@@ -1,260 +1,102 @@
-# Simulador de Tiempos de Arco para linea 305
+# Simulador de Horarios del Corredor Azul
 
-Este proyecto simula tiempos de viaje para una semana completa de la linea 305 del corredor azul usando un modelo de Machine Learning entrenado y lookup tables livianas optimizadas.
+Este proyecto arma, para una semana cualquiera, el horario completo de las 4 líneas troncales del Corredor Azul (305, 303, 336 y 301): a qué hora sale cada bus, cuánto tarda en cada tramo de su ruta, y a qué hora llega. Lo hace con un modelo de Machine Learning entrenado con datos históricos reales, así que no hace falta medir nada a mano para tener un horario razonable.
 
-## Descripción
+## Qué hace
 
-El modelo de predicción está entrenado con datos desde el 01-01-2024 hasta el 18-01-2026 para predecir los tiempos de arco entre paraderos. Este utiliza un modelo XGBoost para la predicción.
+1. Tú le indicas **qué semana** quieres simular (por ejemplo, "la semana 36 de 2026").
+2. El modelo predice, tramo por tramo (llamamos "arco" a cada tramo entre dos paraderos), cuánto va a tardar el bus en recorrerlo — a esa hora, ese día de la semana, en esa línea.
+3. Con esos tiempos arma un horario completo para los 7 días, separando **día hábil**, **sábado** y **domingo**, y ambos sentidos (**ida** y **vuelta**).
+4. Te entrega ese horario en un Excel por línea, listo para revisar.
 
-**Características del modelo:**
-- Período de entrenamiento: 2 años y 18 días de datos históricos
-- Algoritmo: XGBoost (Extreme Gradient Boosting)
-- Métricas de evaluación: MAE: 40.09 seg (  0.67 min), RMSE: 67.18 seg (  1.12 min), R²: 0.4420
-- Tamaño del dataset: [número de registros] observaciones
+El modelo no es perfecto — es una predicción estadística, no una medición. Este proyecto incluye una forma de chequear qué tan bien predijo: si la semana que simulaste ya pasó y tienes el registro real de esa semana, un segundo script te arma gráficos comparando lo simulado contra lo que realmente ocurrió (ver [Cómo revisar qué tan acertada fue la predicción](#cómo-revisar-qué-tan-acertada-fue-la-predicción)).
 
-El script `simulacion_horarios.py` genera simulaciones completas de tiempos de viaje para una línea específica durante una semana completa, considerando:
-- **Semana completa**: Simula los 7 días de una semana específica (Lunes a Domingo)
-- **Tipos de día**: Hábil (Lunes-Viernes), Sábado y Domingo
-- **Horarios**: Desde 4:00 AM hasta 23:59 PM con intervalo configurable (por defecto: 1 minuto)
-- **Ambos sentidos**: Ida y vuelta de la línea
-- **Lookup tables livianas**: Usa archivos Parquet optimizados en lugar de cargar el dataset histórico completo
-- **Predicciones arco por arco**: Simula cada arco de la ruta usando el modelo de ML
-- **Franjas horarias**: Clasifica los tiempos según franjas (PicoManana, ValleManana, Mediodia, ValleTarde, PicoTarde, Noche) como features del modelo
+## Antes de empezar
 
-## Requisitos
+Necesitas tener **Python** instalado. Todo lo demás — el modelo ya entrenado, las rutas de cada línea, etc. — ya viene incluido en este repositorio; no tienes que conseguir ni configurar nada más.
 
-- Python 3.7+
-- Librerías: pandas, numpy, tqdm, pyarrow (para Parquet), xgboost
-- Modelo entrenado: `modelos/mejor_modelo.pkl`
-- Lookup tables: 
-  - `modelos/arco_stats.parquet`
-  - `modelos/arco_franja_stats.parquet`
-  - `modelos/arco_dia_stats.parquet`
-- Feriados: `modelos/feriados.pkl`
-- Rutas: Archivos CSV en `rutas/` con formato `linea_{numero}_{sentido}.csv`
-  - `sentido = 1` para ida
-  - `sentido = 2` para vuelta
-
-## Instalación
-
-1. Clonar o descargar el repositorio
-2. Instalar las dependencias usando `requirements.txt`:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   
-   O instalar manualmente:
-   ```bash
-   pip install pandas numpy tqdm pyarrow xgboost
-   ```
-
-3. Asegurarse de que los archivos de modelos y rutas estén en las carpetas correspondientes
-
-## Uso
-
-### Ejecución básica
+Instala las librerías necesarias una sola vez:
 
 ```bash
-python scripts/simulacion_horarios.py
+pip install -r requirements.txt
 ```
 
-El script simula automáticamente la línea configurada (por defecto línea 305) para la semana especificada.
+## Cómo correrlo
 
-### Parámetros configurables
+Son dos pasos, siempre en este orden y desde la carpeta raíz del proyecto:
 
-Edita las constantes al inicio del script (`simulacion_horarios.py`) para ajustar:
+```bash
+# 1. Simula la semana configurada para las 4 líneas
+python scripts/simulacion_horarios.py
+
+# 2. Genera un notebook con gráficos de los resultados
+python scripts/generar_analisis.py
+```
+
+El primer paso es el que hace el trabajo pesado: simula cerca de 17,000 viajes por línea, así que tardará varios minutos en total para las 4 líneas. Vas a ver una barra de progreso y mensajes en pantalla mientras corre. El segundo paso es rápido — arma y ejecuta el notebook de gráficos en menos de un minuto.
+
+Cuando termina el primer paso, encuentras los resultados en `resultados/semana_{N}/` (siendo `N` el número de semana que configuraste). Cuando termina el segundo, el notebook queda en `analisis/analisis_semana_{N}.ipynb`.
+
+## Cómo leer los resultados
+
+Adentro de `resultados/semana_{N}/` hay un Excel por línea, `simulacion_{LINEA}_semana_{N}.xlsx` (por ejemplo `simulacion_305_semana_36.xlsx`), y cada uno trae varias hojas:
+
+- **`prog_dia_habil`**: el horario recomendado para un día de semana típico (lunes a viernes) — una fila por salida, con hora de salida y de llegada. Es la hoja que probablemente más uses: para armarla, el modelo no promedia los tiempos de un día de semana cualquiera, sino que toma el peor caso razonable (percentil 99) de cada tramo y hora, para que el horario resultante sea realista incluso en un mal día de tráfico.
+- **`prog_sabado`** y **`prog_domingo`**: lo mismo, pero para sábado y domingo (acá sí se usa la predicción directa del modelo, sin ese ajuste al peor caso, porque el tráfico de fin de semana es más parejo).
+- **`det_dia_habil`**, **`det_sabado`**, **`det_domingo`**: el mismo horario, pero desglosado tramo por tramo en vez de viaje completo — útil si necesitas el detalle de cuánto tarda cada arco específico.
+- **`resumen_viajes`** y **`detallado_viajes`**: todos los viajes simulados de la semana (los 7 días, sin agrupar), a nivel de viaje completo y a nivel de tramo respectivamente. Sirven como la data cruda detrás de las hojas anteriores.
+
+Si la semana que simulaste incluye un feriado, vas a ver hojas extra con el prefijo `prog_feriado_`.
+
+### Cómo revisar qué tan acertada fue la predicción
+
+El notebook `analisis/analisis_semana_{N}.ipynb` trae un gráfico por línea: el tiempo de viaje promedio por hora del día, comparando la curva **simulada** contra la curva **real** de esa misma semana (separado por ida y vuelta). Para que aparezca la curva real, necesitas poner el registro operativo real de esa semana en `analisis/Semana {N}.csv` antes de correr `generar_analisis.py` — si no lo tienes (por ejemplo, porque estás simulando una semana que todavía no pasó), el notebook se genera igual, solo que sin esa curva de comparación.
+
+## Cómo cambiar qué semana simular
+
+Al principio de `scripts/simulacion_horarios.py` hay un bloque de configuración. Las líneas que normalmente vas a querer tocar son:
 
 ```python
-LINEA = 305                         # Número de línea a simular
-ANIO = 2026                         # Año de la simulación
-NUM_SEMANA = 34                     # Número de semana ISO 8601 del año (1-53)
-INTERVALO_MINUTOS = 1               # Intervalo entre salidas (minutos)
-HORA_INICIO = 4                     # Hora de inicio (04:00)
-HORA_FIN = 24                       # Hora de fin (incluye 00:00)
+ANIO = 2026
+NUM_SEMANA = 36     # numero de semana ISO del año (1 a 53)
 ```
 
-**Nota**: El script busca automáticamente los archivos de ruta en `rutas/` con el formato:
-- `linea_{LINEA}_1.csv` (ida, sentido = 1)
-- `linea_{LINEA}_2.csv` (vuelta, sentido = 2)
+`NUM_SEMANA` es el número de semana del año siguiendo el estándar ISO 8601 (la semana 1 es la que contiene el primer jueves de enero). Si no estás seguro de qué número le corresponde a una fecha, cualquier buscador te lo dice con "qué semana ISO es el [fecha]".
 
-Cada archivo debe contener una columna `arco_id` con los identificadores de los arcos en orden.
+Un poco más abajo también puedes ajustar cada cuántos minutos sale un bus (`INTERVALO_MINUTOS`) y el rango horario que se simula (`HORA_INICIO`, `HORA_FIN`), aunque normalmente no hace falta tocarlos.
 
-## Outputs Generados
+Después de cambiar la semana, vuelve a correr los dos pasos de [Cómo correrlo](#cómo-correrlo) — cada corrida sobreescribe los archivos de esa misma semana si ya existían, así que no hay problema en simular la misma semana varias veces.
 
-El script genera los siguientes archivos en la carpeta `resultados/semana_{NUM_SEMANA}/`:
+> Hay otras opciones de configuración más técnicas (qué líneas simular, qué versión del modelo usar) que no cubrimos acá porque tocarlas requiere entender cómo está armado el modelo por dentro. Si necesitas cambiar eso, es tema para alguien del equipo técnico — el detalle está documentado en `CLAUDE.md`.
 
-### Archivos Generales
+## Si algo falla
 
-#### 1. `resumen_viajes.csv`
-Resumen de todos los viajes simulados (todos los días y horarios):
+**"Arco '...' no encontrado en lookup tables" (o similar)**
+El modelo no tiene datos históricos para un tramo de la ruta. Puede ser que el archivo de esa línea en la carpeta `rutas/` esté desactualizado o mal armado. Avísale a alguien del equipo técnico con el mensaje de error completo.
 
-| Columna | Descripción |
-|---------|-------------|
-| `fecha` | Fecha del viaje (YYYY-MM-DD) |
-| `dia` | Nombre del día (Lunes, Martes, etc.) |
-| `tipo_dia` | Tipo de día (habil, sabado, domingo) |
-| `hora_salida` | Hora de salida (HH:MM) |
-| `hora_llegada` | Hora de llegada estimada (HH:MM) |
-| `direccion` | Sentido del viaje (ida, vuelta) |
-| `tiempo_total_seg` | Tiempo total del viaje en segundos |
-| `tiempo_total_min` | Tiempo total del viaje en minutos |
+**"Modelo no encontrado" o "Lookup table no encontrada"**
+Faltan archivos dentro de la carpeta `modelos/`. Si descargaste el repositorio de nuevo o cambiaste de carpeta, revisa que la carpeta `modelos/` se haya copiado completa junto con el código.
 
-#### 2. `detallado_viajes.csv`
-Detalle arco por arco de todos los viajes simulados:
+**"Archivo de ruta no encontrado"**
+Falta el archivo de una línea dentro de la carpeta `rutas/` (tiene que existir `linea_{numero}_1.csv` para ida y `linea_{numero}_2.csv` para vuelta).
 
-| Columna | Descripción |
-|---------|-------------|
-| `fecha` | Fecha del viaje |
-| `dia` | Nombre del día |
-| `tipo_dia` | Tipo de día |
-| `hora_salida_viaje` | Hora de salida del viaje (HH:MM) |
-| `direccion` | Sentido (ida, vuelta) |
-| `arco_id` | Identificador del arco |
-| `orden` | Orden del arco en la ruta |
-| `hora_inicio` | Hora de inicio del arco (HH:MM) |
-| `hora_llegada` | Hora de llegada del arco (HH:MM) |
-| `tiempo_arco_seg` | Tiempo del arco en segundos |
-| `tiempo_arco_min` | Tiempo del arco en minutos |
+**El script tarda muchísimo o parece colgado**
+Es normal que tarde varios minutos — simula miles de viajes por línea. Si lleva más de 15-20 minutos sin avanzar, revisa el archivo `simulacion.log` (se genera en la misma carpeta donde corriste el script) para ver en qué se quedó, y avísale al equipo técnico.
 
-### Archivos por Tipo de Día
-
-#### 3. `programacion_dia_habil.csv` y `detallado_dia_habil.csv`
-Programación y detalle para días hábiles (Lunes-Viernes):
-- **Programación**: Resumen de viajes usando **Percentil 99 (P99)** por hora exacta
-- **Detallado**: Desglose arco por arco con tiempos P99 por hora
-- Incluye columna `hora` (hora entera del arco, ej: 7, 8, 17)
-
-#### 4. `programacion_sabado.csv` y `detallado_sabado.csv`
-Programación y detalle para sábados:
-- Predicciones directas del modelo (sin agregación P99)
-
-#### 5. `programacion_domingo.csv` y `detallado_domingo.csv`
-Programación y detalle para domingos:
-- Predicciones directas del modelo (sin agregación P99)
-
-#### 6. Archivos de Feriados (condicional)
-Si la semana incluye feriados, se generan archivos adicionales:
-- `programacion_feriado_{fecha}.csv`
-- `detallado_feriado_{fecha}.csv`
-
-### Notebook de Exploración
-
-El proyecto incluye `exploracion_resultados.ipynb` para analizar y visualizar los resultados:
-- Gráficos de tiempos por hora del día
-- Comparación entre diferentes días
-- Análisis por tipo de día (hábil, sábado, domingo)
-- Estadísticas descriptivas
-
-## Ejemplo de Uso
-
-```bash
-# 1. (Opcional) Editar parámetros en scripts/simulacion_horarios.py:
-#    - LINEA = 305
-#    - ANIO = 2026
-#    - NUM_SEMANA = 34   # semana ISO del año
-
-# 2. Ejecutar el script
-python scripts/simulacion_horarios.py
-
-# 3. Esperar a que complete (puede tardar varios minutos)
-# El script mostrará una barra de progreso con el avance
-
-# 4. Revisar resultados en la carpeta resultados/semana_{NUM_SEMANA}/:
-#    - resumen_viajes.csv
-#    - detallado_viajes.csv
-#    - programacion_dia_habil.csv
-#    - detallado_dia_habil.csv
-#    - programacion_sabado.csv
-#    - detallado_sabado.csv
-#    - programacion_domingo.csv
-#    - detallado_domingo.csv
-
-# 5. Explorar resultados con el notebook:
-#    jupyter notebook exploracion_resultados.ipynb
-```
-
-## Logging
-
-El script genera un archivo `simulacion.log` con información detallada del proceso:
-- Carga de modelo y datos
-- Validación de arcos
-- Errores y advertencias
-- Resumen final
-
-## Notas Importantes
-
-1. **Lookup Tables Livianas**: El script usa archivos Parquet optimizados en lugar de cargar el dataset histórico completo, lo que reduce significativamente el uso de memoria y mejora el rendimiento.
-
-2. **Validación de arcos**: El script valida que todos los arcos de la ruta existan en las lookup tables antes de comenzar la simulación.
-
-3. **Pre-computación**: Las features estáticas de cada arco se pre-computan una vez al inicio para optimizar el rendimiento.
-
-4. **Tiempo de ejecución**: Depende del intervalo configurado y la cantidad de arcos. Para intervalo de 1 minuto (1200+ horarios) y ~40 arcos por sentido, puede tardar 30-60 minutos.
-
-5. **Día Hábil con P99**: Los días hábiles usan Percentil 99 por hora exacta (agrupado por arco + hora + sentido) para generar programaciones más conservadoras y robustas, reflejando las condiciones específicas de cada hora.
-
-6. **Fechas de simulación**: Las fechas se calculan automáticamente según la semana ISO 8601 especificada del año. Los feriados se detectan automáticamente y se generan archivos adicionales.
-
-## Solución de Problemas
-
-### Error: "Arco '{arco}' no encontrado en lookup tables"
-- Verifica que los archivos de ruta existan: `rutas/linea_{LINEA}_1.csv` y `rutas/linea_{LINEA}_2.csv`
-- Verifica que los `arco_id` en los CSVs coincidan exactamente con los de las lookup tables
-- Revisa que los archivos Parquet de lookup tables estén actualizados
-
-### Error: "Modelo no encontrado" o "Lookup table no encontrada"
-- Verifica que existan los archivos:
-  - `modelos/mejor_modelo.pkl`
-  - `modelos/arco_stats.parquet`
-  - `modelos/arco_franja_stats.parquet`
-  - `modelos/arco_dia_stats.parquet`
-  - `modelos/feriados.pkl`
-
-### Error: "Archivo de ruta no encontrado"
-- Verifica que existan los archivos en `rutas/`:
-  - `linea_{LINEA}_1.csv` (ida, sentido = 1)
-  - `linea_{LINEA}_2.csv` (vuelta, sentido = 2)
-- Los archivos deben tener una columna `arco_id` con los identificadores en orden
-
-### Predicciones anómalas
-- El script registra warnings en el log si una predicción es negativa o muy alta
-- Revisa el archivo `simulacion.log` para detalles
-- Verifica que las lookup tables estén actualizadas con datos recientes
-
-## Estructura del Proyecto
+## Estructura del proyecto
 
 ```
-simulador_tiempos_arco/
-├── simulacion_horarios.py       # Script principal de simulación
-├── exploracion_resultados.ipynb # Notebook para analizar resultados
-├── README.md                     # Este archivo
-├── requirements.txt              # Dependencias del proyecto
-├── .gitignore                    # Archivos excluidos de Git
-├── modelos/                      # Modelos y lookup tables
-│   ├── mejor_modelo.pkl
-│   ├── arco_stats.parquet
-│   ├── arco_franja_stats.parquet
-│   ├── arco_dia_stats.parquet
-│   ├── feriados.pkl
-│   └── features_list.txt
-├── rutas/                        # Archivos CSV de rutas
-│   ├── linea_301_1.csv
-│   ├── linea_301_2.csv
-│   ├── linea_303_1.csv
-│   ├── linea_303_2.csv
-│   ├── linea_305_1.csv
-│   └── linea_305_2.csv
-├── resultados/                   # Archivos CSV generados (no versionados)
-│   ├── resumen_viajes.csv
-│   ├── detallado_viajes.csv
-│   ├── programacion_dia_habil.csv
-│   ├── detallado_dia_habil.csv
-│   ├── programacion_sabado.csv
-│   ├── detallado_sabado.csv
-│   ├── programacion_domingo.csv
-│   └── detallado_domingo.csv
-└── simulacion.log                # Log de ejecución (no versionado)
+3_simulador_tiempos_arco/
+├── scripts/
+│   ├── simulacion_horarios.py   # Simula la semana configurada
+│   └── generar_analisis.py      # Genera el notebook de graficos
+├── modelos/                      # Modelo entrenado y sus tablas de apoyo (no se toca a mano)
+├── rutas/                        # Un CSV por linea y sentido, con la secuencia de paraderos
+├── resultados/                   # Se genera al correr la simulacion (un Excel por linea, por semana)
+├── analisis/                     # CSV de datos reales (opcional) + notebook de graficos generado
+├── requirements.txt              # Librerias necesarias
+├── simulacion.log                # Se genera al correr la simulacion
+└── README.md                     # Este archivo
 ```
 
-**Nota**: Los archivos en `modelos/` (`.pkl`, `.parquet`) y `resultados/` (`.csv`, `.xlsx`) están excluidos del control de versiones por su tamaño. Solo se versionan los archivos de código y configuración.
-
+Los contenidos de `resultados/` y `analisis/*.ipynb` no quedan guardados en el control de versiones (se regeneran cada vez que corres los scripts).
