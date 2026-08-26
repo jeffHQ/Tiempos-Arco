@@ -1,0 +1,5 @@
+modelos/**/*.pkl -text -diff
+modelos/**/*.parquet -text -diff
+modelos/**/*.lgb -text -diff
+modelos/**/*.h5 -text -diff
+modelos/**/*.hdf5 -text -diff
