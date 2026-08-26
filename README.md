@@ -69,6 +69,21 @@ Después de cambiar la semana, vuelve a correr los dos pasos de [Cómo correrlo]
 
 > Hay otras opciones de configuración más técnicas (qué líneas simular, qué versión del modelo usar) que no cubrimos acá porque tocarlas requiere entender cómo está armado el modelo por dentro. Si necesitas cambiar eso, es tema para alguien del equipo técnico — el detalle está documentado en `CLAUDE.md`.
 
+## Nota importante: arcos afectados por bidireccionalidad
+
+Debido a la bidireccionalidad algunos arcos se verán afectados. Esto cambia las condiciones de tráfico de ese tramo respecto a lo que refleja el histórico: el dato histórico de **hora punta** en esos arcos corresponde a tráfico mixto (sin carril exclusivo), así que ya no es representativo de la situación real una vez que el carril exclusivo entra en operación.
+
+Por eso, para esos arcos puntuales, **no se debe usar el histórico de hora punta tal cual** — en su lugar, se usa como mejor aproximación la mediana histórica del mismo arco en la hora valle correspondiente:
+
+- Arco con carril exclusivo en **hora punta mañana** → usar la mediana histórica de ese arco en **hora valle mañana**.
+- Arco con carril exclusivo en **hora punta tarde** → usar la mediana histórica de ese arco en **hora valle tarde**.
+
+Esta restricción aplica **únicamente** a esas dos franjas (punta mañana y punta tarde) y solo a los arcos con carril exclusivo — el resto de franjas (valle, mediodía, noche) y el resto de arcos siguen su cálculo normal, sin cambios.
+
+Para la mediana, se recomienda usar las **últimas 8 semanas** de histórico: es suficiente para que el valor sea estable (no depender de 1-2 semanas atípicas) y a la vez lo bastante reciente para reflejar el patrón de tráfico actual.
+
+Este ajuste es un criterio manual a aplicar por quien arma o revisa el horario final — el simulador no lo calcula automáticamente.  
+
 ## Si algo falla
 
 **"Arco '...' no encontrado en lookup tables" (o similar)**
