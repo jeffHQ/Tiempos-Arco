@@ -55,7 +55,7 @@ El script `simulacion_horarios.py` genera simulaciones completas de tiempos de v
 ### Ejecución básica
 
 ```bash
-python simulacion_horarios.py
+python scripts/simulacion_horarios.py
 ```
 
 El script simula automáticamente la línea configurada (por defecto línea 305) para la semana especificada.
@@ -67,8 +67,7 @@ Edita las constantes al inicio del script (`simulacion_horarios.py`) para ajusta
 ```python
 LINEA = 305                         # Número de línea a simular
 ANIO = 2026                         # Año de la simulación
-MES = 2                             # Mes (1-12)
-NUM_SEMANA = 4                      # Número de semana del mes (1-5)
+NUM_SEMANA = 34                     # Número de semana ISO 8601 del año (1-53)
 INTERVALO_MINUTOS = 1               # Intervalo entre salidas (minutos)
 HORA_INICIO = 4                     # Hora de inicio (04:00)
 HORA_FIN = 24                       # Hora de fin (incluye 00:00)
@@ -82,7 +81,7 @@ Cada archivo debe contener una columna `arco_id` con los identificadores de los 
 
 ## Outputs Generados
 
-El script genera los siguientes archivos en la carpeta `resultados/`:
+El script genera los siguientes archivos en la carpeta `resultados/semana_{NUM_SEMANA}/`:
 
 ### Archivos Generales
 
@@ -149,19 +148,18 @@ El proyecto incluye `exploracion_resultados.ipynb` para analizar y visualizar lo
 ## Ejemplo de Uso
 
 ```bash
-# 1. (Opcional) Editar parámetros en simulacion_horarios.py:
+# 1. (Opcional) Editar parámetros en scripts/simulacion_horarios.py:
 #    - LINEA = 305
 #    - ANIO = 2026
-#    - MES = 2
-#    - NUM_SEMANA = 4
+#    - NUM_SEMANA = 34   # semana ISO del año
 
 # 2. Ejecutar el script
-python simulacion_horarios.py
+python scripts/simulacion_horarios.py
 
 # 3. Esperar a que complete (puede tardar varios minutos)
 # El script mostrará una barra de progreso con el avance
 
-# 4. Revisar resultados en la carpeta resultados/:
+# 4. Revisar resultados en la carpeta resultados/semana_{NUM_SEMANA}/:
 #    - resumen_viajes.csv
 #    - detallado_viajes.csv
 #    - programacion_dia_habil.csv
@@ -195,7 +193,7 @@ El script genera un archivo `simulacion.log` con información detallada del proc
 
 5. **Día Hábil con P99**: Los días hábiles usan Percentil 99 por hora exacta (agrupado por arco + hora + sentido) para generar programaciones más conservadoras y robustas, reflejando las condiciones específicas de cada hora.
 
-6. **Fechas de simulación**: Las fechas se calculan automáticamente según la semana especificada del mes. Los feriados se detectan automáticamente y se generan archivos adicionales.
+6. **Fechas de simulación**: Las fechas se calculan automáticamente según la semana ISO 8601 especificada del año. Los feriados se detectan automáticamente y se generan archivos adicionales.
 
 ## Solución de Problemas
 

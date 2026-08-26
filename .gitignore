@@ -38,9 +38,9 @@ ENV/
 *.lgb
 
 # Resultados generados
-resultados/*.csv
-resultados/*.xlsx
-resultados/*.json
+resultados/**/*.csv
+resultados/**/*.xlsx
+resultados/**/*.json
 
 # Logs
 *.log

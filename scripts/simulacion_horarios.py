@@ -6,7 +6,7 @@ Simula tiempos de viaje para una semana completa de las lineas configuradas
 usando lookup tables livianas (sin cargar df_modelado).
 
 Genera archivos Excel por linea con nombre:
-  resultados/simulacion_{LINEA}_semana_{DD}_{MM}.xlsx
+  resultados/semana_{NUM_SEMANA}/simulacion_{LINEA}_semana_{NUM_SEMANA}.xlsx
 """
 
 import pandas as pd
@@ -14,6 +14,7 @@ import numpy as np
 import pickle
 import logging
 import os
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from tqdm import tqdm
@@ -22,31 +23,39 @@ warnings.filterwarnings('ignore')
 
 import lightgbm as lgb
 
+# Raiz del repo (un nivel arriba de scripts/), para que todas las rutas de
+# datos funcionen sin importar desde donde se invoque este script.
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 # ============================================================================
 # CONFIGURACION DE PARAMETROS
 # ============================================================================
 
-LINEAS = [305, 303, 336]    # Lineas a simular (se itera en main)
+LINEAS = [305, 303, 336, 301]    # Lineas a simular (se itera en main)
 LINEA  = 305                # Valor por defecto (compatibilidad con modo single)
 
 ANIO = 2026
-MES = 3
-NUM_SEMANA = 3              # Semana 3 de marzo = Mar 16 - Mar 22
+NUM_SEMANA = 36               # Semana ISO 36 = 31 Ago-6 Sep 2026
 INTERVALO_MINUTOS = 1       # 1 o 5 minutos entre salidas
 HORA_INICIO = 4             # 04:00
 HORA_FIN = 24               # Incluye 00:00 (medianoche)
 
-MODELO_VERSION = 'v2'       # 'v1' o 'v2'
-RUTA_MODELOS   = f'modelos/{MODELO_VERSION}/'
+MODELO_VERSION = 'v2'     # 'v1', 'v2' o 'v4_1'
+RUTA_MODELOS   = str(BASE_DIR / 'modelos' / MODELO_VERSION) + '/'
 
 # Rutas de archivos v1
-RUTA_MODELO        = 'modelos/v1/mejor_modelo.pkl'
-RUTA_ARCO_STATS    = 'modelos/v1/arco_stats.parquet'
-RUTA_ARCO_FRANJA   = 'modelos/v1/arco_franja_stats.parquet'
-RUTA_ARCO_DIA      = 'modelos/v1/arco_dia_stats.parquet'
-RUTA_FERIADOS      = f'modelos/{MODELO_VERSION}/feriados.pkl'
-RUTA_RUTAS         = 'rutas/'
-CARPETA_SALIDA     = 'resultados/'
+RUTA_MODELO        = str(BASE_DIR / 'modelos' / 'v1' / 'mejor_modelo.pkl')
+RUTA_ARCO_STATS    = str(BASE_DIR / 'modelos' / 'v1' / 'arco_stats.parquet')
+RUTA_ARCO_FRANJA   = str(BASE_DIR / 'modelos' / 'v1' / 'arco_franja_stats.parquet')
+RUTA_ARCO_DIA      = str(BASE_DIR / 'modelos' / 'v1' / 'arco_dia_stats.parquet')
+RUTA_FERIADOS      = str(BASE_DIR / 'modelos' / MODELO_VERSION / 'feriados.pkl')
+RUTA_RUTAS         = str(BASE_DIR / 'rutas') + '/'
+RUTA_RUTAS_V4_1    = str(BASE_DIR / 'rutas_v4_1') + '/'
+CARPETA_SALIDA     = str(BASE_DIR / 'resultados' / f'semana_{NUM_SEMANA}') + '/'
+
+# Lineas troncales (BRT, carril exclusivo) segun prediccion_ETA_v4_1/src/utils.py.
+# Cualquier otra linea se clasifica 'alimentador' (feature tipo_linea del modelo v4_1).
+LINEAS_TRONCAL_V4_1 = {'301', '303', '305', '336'}
 
 # ============================================================================
 # CONFIGURACION DE LOGGING
@@ -56,7 +65,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('simulacion.log'),
+        logging.FileHandler(str(BASE_DIR / 'simulacion.log')),
         logging.StreamHandler()
     ]
 )
@@ -96,7 +105,7 @@ def cargar_artefactos():
 def cargar_artefactos_v2():
     """Carga artefactos del modelo v2 (LightGBM)."""
     logger.info("Cargando artefactos v2 (LightGBM)...")
-    base = Path('modelos/v2')
+    base = BASE_DIR / 'modelos' / 'v2'
 
     model = lgb.Booster(model_file=str(base / 'modelo_v3.lgb'))
     with open(base / 'model_meta.pkl', 'rb') as f:
@@ -150,10 +159,18 @@ def cargar_artefactos_v2():
     return model, features, encoders, indices, feriados
 
 
+def _asegurar_arco_id(df):
+    """Si el CSV de ruta no trae arco_id, lo deriva como 'desde - hacia'
+    (misma convencion usada historicamente en rutas/)."""
+    if 'arco_id' not in df.columns:
+        df['arco_id'] = df['parada_desde_norm'] + ' - ' + df['parada_hacia_norm']
+    return df
+
+
 def cargar_ruta(linea, sentido):
     """Carga la secuencia ordenada de arco_ids para una linea y sentido."""
     archivo = os.path.join(RUTA_RUTAS, f'linea_{linea}_{sentido}.csv')
-    df = pd.read_csv(archivo)
+    df = _asegurar_arco_id(pd.read_csv(archivo))
     arcos = df['arco_id'].tolist()
     logger.info(f"Ruta linea {linea} sentido {sentido}: {len(arcos)} arcos")
     return arcos
@@ -162,26 +179,92 @@ def cargar_ruta(linea, sentido):
 def cargar_ruta_df(linea, sentido, normalize_arco_id=False):
     """Carga la ruta completa como DataFrame. Normaliza arco_id si se indica."""
     archivo = os.path.join(RUTA_RUTAS, f'linea_{linea}_{sentido}.csv')
-    df = pd.read_csv(archivo)[['parada_desde_norm', 'parada_hacia_norm', 'arco_id']].copy()
+    df = _asegurar_arco_id(pd.read_csv(archivo))[['parada_desde_norm', 'parada_hacia_norm', 'arco_id']].copy()
     if normalize_arco_id:
         df['arco_id'] = df['arco_id'].str.replace(' - ', '-', regex=False)
     logger.info(f"Ruta df linea {linea} sentido {sentido}: {len(df)} arcos")
     return df
 
 
+def cargar_ruta_df_v4_1(linea, sentido):
+    """Carga la ruta (derivada de SQL en prediccion_ETA_v4_1) para el modelo v4_1.
+    arco_id ya viene en formato 'A-B' (sin espacios), no requiere normalizacion."""
+    archivo = os.path.join(RUTA_RUTAS_V4_1, f'linea_{linea}_{sentido}.csv')
+    df = pd.read_csv(archivo)[['parada_desde_norm', 'parada_hacia_norm', 'arco_id']].copy()
+    logger.info(f"Ruta df v4_1 linea {linea} sentido {sentido}: {len(df)} arcos")
+    return df
+
+
+def cargar_artefactos_v4_1():
+    """
+    Carga artefactos del modelo v4_1 (LightGBM, 51 features, jerarquia de
+    historicos a 5 niveles lv1->lv2->lv3->lv_arco->lv5). A diferencia de v2,
+    guarda las lookup tables como DataFrames pequenos (no indexados) porque la
+    simulacion las combina via pd.merge en lugar de .loc por fila.
+    """
+    logger.info("Cargando artefactos v4_1 (LightGBM, jerarquia L1-L5)...")
+    base = BASE_DIR / 'modelos' / 'v4_1'
+
+    model = lgb.Booster(model_file=str(base / 'modelo_v4_1_lgb_mse.lgb'))
+    with open(base / 'model_meta_v4_1.pkl', 'rb') as f:
+        meta = pickle.load(f)
+    features = meta['features']
+    train_medians = meta['train_medians']
+    logger.info(f"Modelo v4_1: {meta['nombre']}, {len(features)} features")
+
+    with open(base / 'encoders_v4_1.pkl', 'rb') as f:
+        encoders = pickle.load(f)
+
+    lv1        = pd.read_parquet(base / 'lookup_historicos_lv1.parquet')
+    lv2        = pd.read_parquet(base / 'lookup_historicos_lv2.parquet')
+    lv3        = pd.read_parquet(base / 'lookup_historicos_lv3.parquet')
+    lv5        = pd.read_parquet(base / 'lookup_historicos_lv5.parquet')
+    l_arco     = pd.read_parquet(base / 'lookup_historicos_arco.parquet')
+    l_arco_dia = pd.read_parquet(base / 'lookup_historicos_arco_dia.parquet')
+    l_disp     = pd.read_parquet(base / 'lookup_dispersion.parquet')
+    l_geo      = pd.read_parquet(base / 'lookup_geografico.parquet')
+
+    _lr = pd.read_parquet(base / 'lookup_rolling.parquet')
+    l_rolling_last = (
+        _lr.sort_values(['linea', 'arco_id', 'hora_paso_arco', '_ano_iso', '_semana_iso'])
+        .groupby(['linea', 'arco_id', 'hora_paso_arco'])[['rolling_4w_media', 'rolling_8w_media', 'rolling_4w_std']]
+        .last()
+        .reset_index()
+    )
+    del _lr
+
+    for df_ in (lv1, lv2, lv3, l_arco, l_arco_dia, l_disp, l_rolling_last):
+        df_['linea'] = df_['linea'].astype(str)
+
+    disp_med = {
+        'lv3_iqr_ratio':     l_disp['lv3_iqr_ratio'].median(),
+        'lv3_sesgo_derecho': l_disp['lv3_sesgo_derecho'].median(),
+    }
+    geo_dict = l_geo.set_index('parada_id')['distrito'].to_dict()
+
+    indices = {
+        'lv1': lv1, 'lv2': lv2, 'lv3': lv3, 'lv5': lv5,
+        'arco': l_arco, 'arco_dia': l_arco_dia, 'disp': l_disp,
+        'roll_last': l_rolling_last, 'geo_dict': geo_dict, 'disp_med': disp_med,
+    }
+
+    logger.info(f"  lv1: {len(lv1):,} | lv2: {len(lv2):,} | lv3: {len(lv3):,} | "
+                f"lv5: {len(lv5):,} | rolling: {len(l_rolling_last):,}")
+
+    with open(base / 'feriados.pkl', 'rb') as f:
+        feriados = pickle.load(f)
+    logger.info(f"Feriados: {len(feriados)} fechas")
+
+    return model, features, train_medians, encoders, indices, feriados
+
+
 # ============================================================================
 # FUNCIONES DE CALCULO (compartidas)
 # ============================================================================
 
-def calcular_fechas_semana(anio, mes, num_semana):
-    """Calcula las 7 fechas de la semana N del mes M."""
-    primer_dia = date(anio, mes, 1)
-    dia_semana_primero = primer_dia.weekday()
-    if dia_semana_primero == 0:
-        primer_lunes = primer_dia
-    else:
-        primer_lunes = primer_dia + timedelta(days=(7 - dia_semana_primero))
-    lunes_semana_n = primer_lunes + timedelta(weeks=num_semana - 1)
+def calcular_fechas_semana(anio, num_semana):
+    """Calcula las 7 fechas de la semana ISO 8601 N del anio."""
+    lunes_semana_n = date.fromisocalendar(anio, num_semana, 1)
 
     fechas = {}
     for i in range(7):
@@ -301,7 +384,7 @@ def crear_features_arco(arco_id, fecha, hora_decimal, sentido, linea,
 
 def _hora_a_franja_v2(hora):
     """Clasifica la hora entera en franja horaria (v2)."""
-    if hora <= 6:
+    if hora < 6:
         return 'Valle'
     elif hora <= 9:
         return 'Pico_manana'
@@ -386,6 +469,43 @@ def _lookup_historicos_v2(indices, linea_int, arco, hora, dia_semana, franja):
     except KeyError:
         pass
     return res
+
+
+def _calcular_promedio_valle_v2(indices_v2, linea_int, arco_id, horas_valle):
+    """
+    Promedio "valle" para arcos modificados por cambio de ruta (ver ARCOS_MODIFICADOS_V2).
+    Cascada: rolling 4 semanas (horas exactas) -> rolling 8 semanas -> lv3 franja Mediodia
+    (unica franja de v2 que cubre las horas 10-16) -> historico general del arco.
+    Devuelve (valor_o_None, nivel_usado).
+    """
+    for campo, nivel in (('rolling_4w_media', 'rolling_4w'), ('rolling_8w_media', 'rolling_8w')):
+        valores = []
+        for h in horas_valle:
+            try:
+                r = indices_v2['roll'].loc[(linea_int, arco_id, h)]
+                v = r[campo]
+                if pd.notna(v):
+                    valores.append(v)
+            except KeyError:
+                pass
+        if valores:
+            return float(np.mean(valores)), nivel
+
+    try:
+        r = indices_v2['lv3'].loc[(linea_int, arco_id, 'Mediodia')]
+        if pd.notna(r['lv3_media']):
+            return float(r['lv3_media']), 'lv3_mediodia'
+    except KeyError:
+        pass
+
+    try:
+        r = indices_v2['arco'].loc[(linea_int, arco_id)]
+        if pd.notna(r['tiempo_historico_arco']):
+            return float(r['tiempo_historico_arco']), 'arco_historico'
+    except KeyError:
+        pass
+
+    return None, 'sin_datos'
 
 
 def _lookup_arco_base_v2(indices, linea_int, arco, dia_semana):
@@ -716,6 +836,23 @@ def simular_viaje_v2(arcos_precomp_v2, fecha, hora_inicio_decimal,
     return resultados
 
 
+# Arcos afectados por modificaciones fisicas de ruta (semana 34, ago 2026): se vuelven mas
+# rapidos y el modelo (entrenado con los tiempos antiguos) no lo refleja. En hora punta
+# (manana 6-9h / tarde 17-20h) se sustituye la prediccion por el promedio "valle" de las
+# ultimas 4 semanas (ver _calcular_promedio_valle_v2); fuera de punta se usa el modelo normal.
+ARCOS_MODIFICADOS_V2 = {
+    (301, 1): ['TARMA-SACO OLIVEROS', 'SACO OLIVEROS-R. DAGNINO', 'R. DAGNINO-CUBA'],
+    (301, 2): ['E. FERNANDEZ-R. DAGNINO', 'R. DAGNINO-SACO OLIVEROS', 'SACO OLIVEROS-ESPAÑA'],
+    (305, 1): ['HUANCAYO-SACO OLIVEROS', 'SACO OLIVEROS-R. DAGNINO', 'R. DAGNINO-CUBA'],
+    (305, 2): ['E. FERNANDEZ-R. DAGNINO', 'R. DAGNINO-SACO OLIVEROS', 'SACO OLIVEROS-ESPAÑA'],
+    (336, 1): ['HUANCAYO-SACO OLIVEROS'],
+    (303, 1): ['HUANCAYO-SACO OLIVEROS', 'SACO OLIVEROS-NATALIO SANCHEZ', 'NATALIO SANCHEZ-CUBA'],
+    (303, 2): ['E. FERNANDEZ-SACO OLIVEROS', 'SACO OLIVEROS-ESPAÑA'],
+}
+HORAS_VALLE_MANANA_V2 = [10, 11]
+HORAS_VALLE_TARDE_V2  = [15, 16]
+
+
 def _simular_semana_v2_batch(linea, sentido, ruta_df, fechas_semana, horarios,
                               model_v2, features_v2, encoders_v2, indices_v2, feriados):
     """
@@ -780,6 +917,21 @@ def _simular_semana_v2_batch(linea, sentido, ruta_df, fechas_semana, horarios,
     horarios_arr = np.array(horarios)
     n_horarios   = len(horarios_arr)
 
+    # Arcos con modificacion de ruta (ver ARCOS_MODIFICADOS_V2): en hora punta se sustituye
+    # la prediccion del modelo por el promedio "valle" de las ultimas 4 semanas.
+    arcos_override = ARCOS_MODIFICADOS_V2.get((linea_int, sentido), [])
+    override_map = {}
+    for col, aid in enumerate(arco_ids):
+        if aid not in arcos_override:
+            continue
+        vm, nivel_m = _calcular_promedio_valle_v2(indices_v2, linea_int, aid, HORAS_VALLE_MANANA_V2)
+        vt, nivel_t = _calcular_promedio_valle_v2(indices_v2, linea_int, aid, HORAS_VALLE_TARDE_V2)
+        logger.info(
+            f"Override valle linea={linea_int} sentido={sentido} arco={aid}: "
+            f"valle_manana={vm} ({nivel_m}), valle_tarde={vt} ({nivel_t})"
+        )
+        override_map[col] = (vm, vt)
+
     all_dfs = []
     for fecha, tipo_dia in fechas_semana.items():
         dia_nombre = dias_nombres[fecha.weekday()]
@@ -793,14 +945,39 @@ def _simular_semana_v2_batch(linea, sentido, ruta_df, fechas_semana, horarios,
             if slot_row is not None:
                 preds_day[h_idx] = preds_matrix[slot_row]
 
-        # Vectorizado: horas acumuladas
-        cumhours = np.hstack([
-            np.zeros((n_horarios, 1)),
-            np.cumsum(preds_day, axis=1)
-        ]) / 3600.0  # (n_horarios, n_arcos+1)
+        if override_map:
+            # Recorrido secuencial por posicion de arco (solo aritmetica, sin llamar al
+            # modelo de nuevo) para poder clasificar punta/valle con la hora REAL de paso
+            # por cada arco, no con la hora de salida del viaje.
+            hora_actual      = horarios_arr.astype(np.float64).copy()
+            hora_inicio_mat  = np.zeros((n_horarios, n_arcos))
+            hora_llegada_mat = np.zeros((n_horarios, n_arcos))
+            for col in range(n_arcos):
+                tiempo_seg = preds_day[:, col].copy()
+                if col in override_map:
+                    hora_int_pass = np.floor(hora_actual).astype(np.int64) % 24
+                    vm, vt = override_map[col]
+                    if vm is not None:
+                        tiempo_seg = np.where(
+                            (hora_int_pass >= 6) & (hora_int_pass <= 9), vm, tiempo_seg
+                        )
+                    if vt is not None:
+                        tiempo_seg = np.where(
+                            (hora_int_pass >= 17) & (hora_int_pass <= 20), vt, tiempo_seg
+                        )
+                hora_inicio_mat[:, col] = hora_actual
+                hora_actual = hora_actual + tiempo_seg / 3600.0
+                hora_llegada_mat[:, col] = hora_actual
+                preds_day[:, col] = tiempo_seg
+        else:
+            # Vectorizado: horas acumuladas
+            cumhours = np.hstack([
+                np.zeros((n_horarios, 1)),
+                np.cumsum(preds_day, axis=1)
+            ]) / 3600.0  # (n_horarios, n_arcos+1)
 
-        hora_inicio_mat  = horarios_arr[:, None] + cumhours[:, :-1]  # (n_horarios, n_arcos)
-        hora_llegada_mat = horarios_arr[:, None] + cumhours[:, 1:]
+            hora_inicio_mat  = horarios_arr[:, None] + cumhours[:, :-1]  # (n_horarios, n_arcos)
+            hora_llegada_mat = horarios_arr[:, None] + cumhours[:, 1:]
 
         df_day = pd.DataFrame({
             'arco_id':              np.tile(arco_ids, n_horarios),
@@ -819,6 +996,294 @@ def _simular_semana_v2_batch(linea, sentido, ruta_df, fechas_semana, horarios,
         all_dfs.append(df_day)
 
     return pd.concat(all_dfs, ignore_index=True)
+
+
+# ============================================================================
+# FUNCIONES DE SIMULACION V4_1
+# ============================================================================
+#
+# A diferencia de v2 (Hora_Partida fija para todo el viaje -> se podia agrupar
+# en ~280 slots por sentido), v4_1 tiene una feature `hora_paso_arco` que es la
+# hora real de paso por CADA arco y avanza a medida que el viaje progresa
+# (analoga al reloj que avanzaba en v1). El motor de abajo combina ambos
+# enfoques: itera secuencialmente por POSICION de arco (para poder avanzar el
+# reloj), pero dentro de cada posicion predice en batch para TODAS las salidas
+# de la semana a la vez (una llamada a model.predict() por arco, no por viaje).
+
+_AV_PATTERN_V4_1 = re.compile(r'\bAV\.?\b|\bAVENIDA\b')
+
+
+def _clasificar_tipo_linea_v4_1(linea):
+    """'troncal' si la linea esta en LINEAS_TRONCAL_V4_1, si no 'alimentador'."""
+    return 'troncal' if str(linea).strip() in LINEAS_TRONCAL_V4_1 else 'alimentador'
+
+
+def _encode_le_v4_1(encoder, value, default=-1):
+    """LabelEncoder.transform con fallback para categorias no vistas (escalar)."""
+    try:
+        return int(encoder.transform([str(value)])[0])
+    except (ValueError, KeyError):
+        return default
+
+
+def _encode_le_array_v4_1(encoder, values, default=-1):
+    """Version vectorizada de _encode_le_v4_1 para un array de valores."""
+    class_to_idx = {c: i for i, c in enumerate(encoder.classes_)}
+    return pd.Series(values).map(class_to_idx).fillna(default).astype(np.int64).to_numpy()
+
+
+def _franja_paso_vec_v4_1(hora_arr):
+    """Vectoriza src.utils.asignar_franja (6 franjas) de prediccion_ETA_v4_1."""
+    conds = [
+        (hora_arr >= 6) & (hora_arr <= 9),
+        (hora_arr >= 10) & (hora_arr <= 11),
+        (hora_arr >= 12) & (hora_arr <= 14),
+        (hora_arr >= 15) & (hora_arr <= 16),
+        (hora_arr >= 17) & (hora_arr <= 20),
+    ]
+    choices = ['PicoManana', 'ValleManana', 'Mediodia', 'ValleTarde', 'PicoTarde']
+    return np.select(conds, choices, default='Noche')
+
+
+def precomputar_arcos_v4_1(ruta_df, sentido, linea, encoders, indices):
+    """Pre-computa features estaticas por arco (no dependen del reloj de simulacion)."""
+    n_arcos = len(ruta_df)
+    linea_str = str(linea)
+    tipo_linea = _clasificar_tipo_linea_v4_1(linea_str)
+    linea_enc = encoders['linea'].get(linea_str, -1)
+    tipo_enc = encoders['tipo_linea'].get(tipo_linea, -1)
+    sent_enc = encoders['sentido'].get(sentido, -1)
+    geo_dict = indices['geo_dict']
+
+    arcos_precomp = []
+    for pos, row in enumerate(ruta_df.itertuples(index=False)):
+        arco  = row.arco_id
+        desde = row.parada_desde_norm
+        hacia = row.parada_hacia_norm
+
+        static = {}
+        static['arco_id_encoded']      = _encode_le_v4_1(encoders['arco_id'], arco)
+        static['parada_desde_encoded'] = _encode_le_v4_1(encoders['parada_desde_norm'], desde)
+        static['parada_hacia_encoded'] = _encode_le_v4_1(encoders['parada_hacia_norm'], hacia)
+        static['linea_encoded']        = linea_enc
+        static['sentido_encoded']      = sent_enc
+        static['tipo_linea_encoded']   = tipo_enc
+
+        distrito = geo_dict.get(desde) or 'Sin_dato'
+        static['distrito_desde_encoded'] = _encode_le_v4_1(encoders['distrito_desde'], distrito)
+        static['es_avenida_principal']   = int(bool(_AV_PATTERN_V4_1.search(str(desde).upper())))
+
+        static['distancia_arco_metros'] = -1.0
+        static['tiene_longitud']        = 0
+
+        static['posicion_arco_en_viaje'] = pos
+        static['total_arcos_viaje']      = n_arcos
+        static['es_primer_arco']         = int(pos == 0)
+        static['es_ultimo_arco']         = int(pos == n_arcos - 1)
+        static['progreso_viaje']         = pos / n_arcos
+
+        arcos_precomp.append({'arco_id': arco, 'static_feats': static})
+
+    return arcos_precomp
+
+
+def _aplicar_historicos_batch_v4_1(df_s, lv1_l, lv2_l, lv3_l, lv5_l, arco_l, arco_dia_l, disp_l, disp_med):
+    """
+    Puerto de prediccion_ETA_v4_1/src/features.py::aplicar_historicos a
+    inferencia: misma jerarquia de fallback lv1->lv2->lv3->lv_arco->lv5.
+    """
+    df_s = df_s.merge(lv1_l, on=['linea', 'arco_id', 'hora_paso_arco', 'DiaSemana_num'], how='left')
+    df_s = df_s.merge(lv2_l, on=['linea', 'arco_id', 'hora_paso_arco'], how='left')
+    df_s = df_s.merge(lv3_l, on=['linea', 'arco_id', 'franja_paso'], how='left')
+    df_s = df_s.merge(arco_l, on=['linea', 'arco_id'], how='left')
+    df_s = df_s.merge(arco_dia_l, on=['linea', 'arco_id', 'DiaSemana_num'], how='left')
+    df_s = df_s.merge(lv5_l, on=['tipo_linea', 'franja_paso'], how='left')
+
+    # Preservar el valor pre-fallback para distinguir "arco visto en train"
+    # (nivel 1-3) de "arco nunca visto en train" (nivel 5).
+    _tiempo_historico_arco_orig = df_s['tiempo_historico_arco']
+
+    df_s['tiempo_historico_arco_hora_diasemana'] = (
+        df_s['lv1_media'].fillna(df_s['lv2_media']).fillna(df_s['lv3_media'])
+        .fillna(df_s['tiempo_historico_arco']).fillna(df_s['lv5_media'])
+    )
+    df_s['std_historico_arco_hora_diasemana'] = (
+        df_s['lv1_std'].fillna(df_s['lv2_std']).fillna(df_s['lv3_std'])
+        .fillna(df_s['std_historico_arco']).fillna(df_s['lv5_std'])
+    )
+    df_s['percentil_95_arco_hora_diasemana'] = (
+        df_s['lv1_p95'].fillna(df_s['tiempo_historico_arco']).fillna(df_s['lv5_p95'])
+    )
+    df_s['tiempo_historico_arco_hora'] = (
+        df_s['lv2_media'].fillna(df_s['tiempo_historico_arco']).fillna(df_s['lv5_media'])
+    )
+    df_s['percentil_75_arco'] = df_s['percentil_75_arco'].fillna(df_s['lv5_p75'])
+    df_s['percentil_90_arco'] = df_s['percentil_90_arco'].fillna(df_s['lv5_p90'])
+    df_s['tiempo_historico_arco'] = df_s['tiempo_historico_arco'].fillna(df_s['lv5_media'])
+    df_s['tiempo_historico_arco_dia'] = df_s['tiempo_historico_arco_dia'].fillna(df_s['tiempo_historico_arco'])
+    df_s['std_historico_arco'] = df_s['std_historico_arco'].fillna(df_s['lv5_std'])
+
+    df_s['nivel_historico'] = np.where(
+        df_s['lv1_media'].notna(), 1,
+        np.where(df_s['lv2_media'].notna(), 2,
+                 np.where(df_s['lv3_media'].notna() | _tiempo_historico_arco_orig.notna(), 3, 5))
+    ).astype(np.int8)
+
+    df_s['cv_historico_arco_hora'] = (
+        df_s['std_historico_arco_hora_diasemana'] /
+        df_s['tiempo_historico_arco_hora_diasemana'].replace(0, np.nan)
+    ).fillna(0)
+
+    df_s = df_s.merge(disp_l, on=['linea', 'arco_id', 'franja_paso'], how='left')
+    df_s['lv3_iqr_ratio']     = df_s['lv3_iqr_ratio'].fillna(disp_med['lv3_iqr_ratio'])
+    df_s['lv3_sesgo_derecho'] = df_s['lv3_sesgo_derecho'].fillna(disp_med['lv3_sesgo_derecho'])
+
+    drop_cols = ['lv1_media', 'lv1_std', 'lv1_p95', 'lv1_n', 'lv2_media', 'lv2_std', 'lv2_n',
+                 'lv3_media', 'lv3_std', 'lv3_p75', 'lv3_p90',
+                 'lv5_media', 'lv5_std', 'lv5_p75', 'lv5_p90', 'lv5_p95']
+    df_s = df_s.drop(columns=[c for c in drop_cols if c in df_s.columns], errors='ignore')
+    return df_s
+
+
+def _aplicar_rolling_batch_v4_1(df_s, roll_l):
+    """Puerto de aplicar_rolling (rama de inferencia: usa el ultimo valor conocido)."""
+    df_s = df_s.merge(roll_l, on=['linea', 'arco_id', 'hora_paso_arco'], how='left')
+    df_s = df_s.rename(columns={
+        'rolling_4w_media': 'rolling_4semanas_media_arco_hora',
+        'rolling_8w_media': 'rolling_8semanas_media_arco_hora',
+        'rolling_4w_std':   'rolling_4semanas_std_arco_hora',
+    })
+    for col in ['rolling_4semanas_media_arco_hora', 'rolling_8semanas_media_arco_hora']:
+        df_s[col] = df_s[col].fillna(df_s['tiempo_historico_arco'])
+    df_s['rolling_4semanas_std_arco_hora'] = df_s['rolling_4semanas_std_arco_hora'].fillna(0)
+    return df_s
+
+
+def _simular_semana_v4_1_batch(linea, sentido, ruta_df, fechas_semana, horarios,
+                                model, features, train_medians, encoders, indices, feriados):
+    """
+    Simula todas las salidas de la semana para (linea, sentido) con el modelo
+    v4_1. Itera por POSICION de arco (para poder avanzar hora_paso_arco de cada
+    salida), pero cada iteracion predice en batch para todas las salidas a la
+    vez: 1 llamada a model.predict() por arco en vez de por viaje.
+    """
+    arcos_precomp = precomputar_arcos_v4_1(ruta_df, sentido, linea, encoders, indices)
+    linea_str = str(linea)
+    tipo_linea = _clasificar_tipo_linea_v4_1(linea_str)
+
+    # Pre-filtrar lookups a la linea actual: acelera los merges y evita
+    # colisiones accidentales entre lineas.
+    lv1_l      = indices['lv1'][indices['lv1']['linea'] == linea_str]
+    lv2_l      = indices['lv2'][indices['lv2']['linea'] == linea_str]
+    lv3_l      = indices['lv3'][indices['lv3']['linea'] == linea_str]
+    lv5_l      = indices['lv5']  # keyed por tipo_linea, no por linea
+    arco_l     = indices['arco'][indices['arco']['linea'] == linea_str]
+    arco_dia_l = indices['arco_dia'][indices['arco_dia']['linea'] == linea_str]
+    disp_l     = indices['disp'][indices['disp']['linea'] == linea_str]
+    roll_l     = indices['roll_last'][indices['roll_last']['linea'] == linea_str]
+    disp_med   = indices['disp_med']
+
+    fechas_list  = sorted(fechas_semana.keys())
+    n_fechas     = len(fechas_list)
+    horarios_arr = np.array(horarios)
+    n_horarios   = len(horarios_arr)
+
+    fechas_rep   = np.repeat(fechas_list, n_horarios)
+    horarios_rep = np.tile(horarios_arr, n_fechas)
+
+    dia_semana_arr  = np.array([f.weekday() for f in fechas_rep])
+    dia_mes_arr     = np.array([f.day for f in fechas_rep])
+    mes_arr         = np.array([f.month for f in fechas_rep])
+    es_feriado_arr  = np.array([int(f in feriados) for f in fechas_rep])
+    ano_arr         = np.array([f.year for f in fechas_rep])
+    semana_mes_arr  = (dia_mes_arr - 1) // 7 + 1
+
+    hora_int_sal = horarios_rep.astype(int)
+    minuto_sal   = ((horarios_rep % 1) * 60).astype(int)
+
+    # Features de nivel-viaje: fijas para todos los arcos del mismo viaje
+    # (equivalente a Hora_Partida fija en v2, pero aqui coexiste con
+    # hora_paso_arco que si avanza por arco).
+    trip = pd.DataFrame({
+        'Hora_Partida':     hora_int_sal,
+        'hora_sin':         np.sin(2 * np.pi * hora_int_sal / 24),
+        'hora_cos':         np.cos(2 * np.pi * hora_int_sal / 24),
+        'DiaSemana_num':    dia_semana_arr,
+        'es_fin_semana':    (dia_semana_arr >= 5).astype(int),
+        'dia_mes':          dia_mes_arr,
+        'mes':              mes_arr,
+        'es_feriado':       es_feriado_arr,
+        'ano':              ano_arr,
+        'semana_del_mes':   semana_mes_arr,
+        'intervalo_30min':  hora_int_sal * 2 + (minuto_sal >= 30).astype(int),
+        'hora_x_diasemana': hora_int_sal * 10 + dia_semana_arr,
+        'linea':            linea_str,
+        'tipo_linea':       tipo_linea,
+    })
+
+    dias_nombres  = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado', 'Domingo']
+    direccion     = 'ida' if sentido == 1 else 'vuelta'
+    tipo_dia_arr  = np.array([fechas_semana[f] for f in fechas_rep])
+    dia_nombre_arr = np.array([dias_nombres[f.weekday()] for f in fechas_rep])
+
+    hora_actual = horarios_rep.astype(np.float64).copy()  # reloj que avanza arco a arco
+    resultados = []
+
+    for ap in arcos_precomp:
+        arco_id = ap['arco_id']
+        static  = ap['static_feats']
+
+        hora_paso_int = hora_actual.astype(np.int64) % 24
+        minuto_paso   = ((hora_actual % 1) * 60).astype(int)
+        franja_paso_arr = _franja_paso_vec_v4_1(hora_paso_int)
+        franja_enc_arr  = _encode_le_array_v4_1(encoders['franja_paso'], franja_paso_arr)
+
+        df_s = trip.copy()
+        df_s['arco_id']              = arco_id
+        df_s['hora_paso_arco']       = hora_paso_int
+        df_s['intervalo_paso_30min'] = hora_paso_int * 2 + (minuto_paso >= 30).astype(int)
+        df_s['hora_paso_sin']        = np.sin(2 * np.pi * hora_paso_int / 24)
+        df_s['hora_paso_cos']        = np.cos(2 * np.pi * hora_paso_int / 24)
+        df_s['franja_paso']          = franja_paso_arr
+        df_s['franja_paso_encoded']  = franja_enc_arr
+        df_s['es_pico_maximo']       = (hora_paso_int == 17).astype(int)
+
+        for k, v in static.items():
+            df_s[k] = v
+
+        df_s['hora_paso_x_dia_linea'] = (
+            hora_paso_int * 1000 + df_s['DiaSemana_num'].to_numpy() * 100 + static['linea_encoded']
+        )
+
+        df_s = _aplicar_historicos_batch_v4_1(
+            df_s, lv1_l, lv2_l, lv3_l, lv5_l, arco_l, arco_dia_l, disp_l, disp_med
+        )
+        df_s = _aplicar_rolling_batch_v4_1(df_s, roll_l)
+
+        for col, med in train_medians.items():
+            if col in df_s.columns:
+                df_s[col] = df_s[col].fillna(med)
+
+        preds = np.clip(model.predict(df_s[features]), 5, None)
+
+        resultados.append(pd.DataFrame({
+            'arco_id':              arco_id,
+            'orden':                static['posicion_arco_en_viaje'] + 1,
+            'hora_inicio_decimal':  hora_actual.copy(),
+            'hora_llegada_decimal': hora_actual + preds / 3600.0,
+            'tiempo_arco_seg':      preds,
+            'hora_salida_viaje':    horarios_rep,
+            'fecha':                fechas_rep,
+            'dia':                  dia_nombre_arr,
+            'tipo_dia':             tipo_dia_arr,
+        }))
+
+        hora_actual = hora_actual + preds / 3600.0
+
+    df_all = pd.concat(resultados, ignore_index=True)
+    df_all['sentido']   = sentido
+    df_all['direccion'] = direccion
+    return df_all
 
 
 # ============================================================================
@@ -852,7 +1317,10 @@ def simular_semana_completa(linea, feriados, arcos_ida, arcos_vuelta, fechas_sem
                              arco_franja_stats=None, arco_dia_stats=None,
                              # v2 args
                              model_v2=None, features_v2=None, encoders_v2=None,
-                             indices_v2=None, ruta_ida_df=None, ruta_vuelta_df=None):
+                             indices_v2=None, ruta_ida_df=None, ruta_vuelta_df=None,
+                             # v4_1 args
+                             model_v4_1=None, features_v4_1=None, train_medians_v4_1=None,
+                             encoders_v4_1=None, indices_v4_1=None):
     """Simula todos los viajes de la semana para la version de modelo activa."""
     horarios = generar_horarios_salida()
     total_viajes = len(fechas_semana) * len(horarios) * 2
@@ -897,6 +1365,20 @@ def simular_semana_completa(linea, feriados, arcos_ida, arcos_vuelta, fechas_sem
             df_s = _simular_semana_v2_batch(
                 linea, sentido_num, ruta_df, fechas_semana, horarios,
                 model_v2, features_v2, encoders_v2, indices_v2, feriados
+            )
+            dfs.append(df_s)
+        df = pd.concat(dfs, ignore_index=True)
+
+    elif MODELO_VERSION == 'v4_1':
+        logger.info(f"Linea {linea}: simulacion v4_1 batch (secuencial por arco, vectorizado)...")
+        dfs = []
+        for sentido_num, ruta_df, direccion in [
+            (1, ruta_ida_df, 'ida'),
+            (2, ruta_vuelta_df, 'vuelta'),
+        ]:
+            df_s = _simular_semana_v4_1_batch(
+                linea, sentido_num, ruta_df, fechas_semana, horarios,
+                model_v4_1, features_v4_1, train_medians_v4_1, encoders_v4_1, indices_v4_1, feriados
             )
             dfs.append(df_s)
         df = pd.concat(dfs, ignore_index=True)
@@ -948,8 +1430,8 @@ def generar_detallado_viajes(df):
 
 def generar_programacion_dia_habil(df, arcos_ida, arcos_vuelta):
     """
-    Programacion P99 para dia habil: programa conservadora usando el
-    percentil 99 de tiempos por arco+hora observados en la semana.
+    Programacion P90 para dia habil: programa conservadora usando el
+    percentil 90 de tiempos por arco+hora observados en la semana.
     """
     df_habil = df[df['tipo_dia'] == 'habil'].copy()
     if df_habil.empty:
@@ -957,8 +1439,8 @@ def generar_programacion_dia_habil(df, arcos_ida, arcos_vuelta):
 
     df_habil['hora'] = df_habil['hora_inicio_decimal'].astype(int)
 
-    p99 = df_habil.groupby(['arco_id', 'hora', 'sentido']).agg(
-        tiempo_arco_p99_seg=('tiempo_arco_seg', lambda x: np.percentile(x, 99))
+    p90 = df_habil.groupby(['arco_id', 'hora', 'sentido']).agg(
+        tiempo_arco_p90_seg=('tiempo_arco_seg', lambda x: np.percentile(x, 90))
     ).reset_index()
 
     horarios = generar_horarios_salida()
@@ -971,16 +1453,16 @@ def generar_programacion_dia_habil(df, arcos_ida, arcos_vuelta):
             tiempo_total = 0.0
             for i, arco_id in enumerate(arcos):
                 hora_exacta = int(hora_actual)
-                mask = ((p99['arco_id'] == arco_id)
-                        & (p99['hora'] == hora_exacta)
-                        & (p99['sentido'] == sentido_num))
-                match = p99[mask]
+                mask = ((p90['arco_id'] == arco_id)
+                        & (p90['hora'] == hora_exacta)
+                        & (p90['sentido'] == sentido_num))
+                match = p90[mask]
                 if not match.empty:
-                    t_seg = float(match.iloc[0]['tiempo_arco_p99_seg'])
+                    t_seg = float(match.iloc[0]['tiempo_arco_p90_seg'])
                 else:
-                    mask2 = (p99['arco_id'] == arco_id) & (p99['sentido'] == sentido_num)
-                    match2 = p99[mask2]
-                    t_seg = float(match2['tiempo_arco_p99_seg'].max()) if not match2.empty else 0.0
+                    mask2 = (p90['arco_id'] == arco_id) & (p90['sentido'] == sentido_num)
+                    match2 = p90[mask2]
+                    t_seg = float(match2['tiempo_arco_p90_seg'].max()) if not match2.empty else 0.0
 
                 hora_llegada = hora_actual + (t_seg / 3600.0)
                 det_rows.append({
@@ -990,8 +1472,8 @@ def generar_programacion_dia_habil(df, arcos_ida, arcos_vuelta):
                     'orden': i + 1,
                     'hora_inicio': decimal_a_hhmm(hora_actual),
                     'hora_llegada': decimal_a_hhmm(hora_llegada),
-                    'tiempo_arco_p99_seg': round(t_seg, 2),
-                    'tiempo_arco_p99_min': round(t_seg / 60, 2),
+                    'tiempo_arco_p90_seg': round(t_seg, 2),
+                    'tiempo_arco_p90_min': round(t_seg / 60, 2),
                     'hora': hora_exacta,
                 })
                 tiempo_total += t_seg
@@ -1130,12 +1612,12 @@ def main():
                 MODELO_VERSION, LINEAS)
     logger.info("=" * 80)
 
-    fechas_semana = calcular_fechas_semana(ANIO, MES, NUM_SEMANA)
+    fechas_semana = calcular_fechas_semana(ANIO, NUM_SEMANA)
     lunes = min(fechas_semana.keys())
-    semana_str = f"{lunes.day:02d}_{lunes.month:02d}"
+    semana_str = str(NUM_SEMANA)
 
-    logger.info("Fechas semana %d de %d/%d: %s - %s",
-                NUM_SEMANA, MES, ANIO, lunes, max(fechas_semana.keys()))
+    logger.info("Fechas semana ISO %d de %d: %s - %s",
+                NUM_SEMANA, ANIO, lunes, max(fechas_semana.keys()))
     for fecha, tipo in fechas_semana.items():
         logger.info("  %s (%s) - %s", fecha,
                     ['Lun','Mar','Mie','Jue','Vie','Sab','Dom'][fecha.weekday()], tipo)
@@ -1149,8 +1631,15 @@ def main():
         model_v2, features_v2, encoders_v2, indices_v2, feriados = cargar_artefactos_v2()
         artefactos_v2 = dict(model_v2=model_v2, features_v2=features_v2,
                              encoders_v2=encoders_v2, indices_v2=indices_v2)
+    elif MODELO_VERSION == 'v4_1':
+        model_v4_1, features_v4_1, train_medians_v4_1, encoders_v4_1, indices_v4_1, feriados = cargar_artefactos_v4_1()
+        artefactos_v4_1 = dict(model_v4_1=model_v4_1, features_v4_1=features_v4_1,
+                               train_medians_v4_1=train_medians_v4_1,
+                               encoders_v4_1=encoders_v4_1, indices_v4_1=indices_v4_1)
     else:
         raise ValueError(f"MODELO_VERSION desconocida: '{MODELO_VERSION}'")
+
+    all_dfs = []
 
     for linea_actual in LINEAS:
         logger.info("-" * 60)
@@ -1172,7 +1661,7 @@ def main():
                 **artefactos_v1,
             )
 
-        else:  # v2
+        elif MODELO_VERSION == 'v2':
             ruta_ida_df    = cargar_ruta_df(linea_actual, 1, normalize_arco_id=True)
             ruta_vuelta_df = cargar_ruta_df(linea_actual, 2, normalize_arco_id=True)
             arcos_ida    = ruta_ida_df['arco_id'].tolist()
@@ -1186,6 +1675,23 @@ def main():
                 **artefactos_v2,
             )
 
+        else:  # v4_1
+            ruta_ida_df    = cargar_ruta_df_v4_1(linea_actual, 1)
+            ruta_vuelta_df = cargar_ruta_df_v4_1(linea_actual, 2)
+            arcos_ida    = ruta_ida_df['arco_id'].tolist()
+            arcos_vuelta = ruta_vuelta_df['arco_id'].tolist()
+
+            df = simular_semana_completa(
+                linea=linea_actual, feriados=feriados,
+                arcos_ida=arcos_ida, arcos_vuelta=arcos_vuelta,
+                fechas_semana=fechas_semana,
+                ruta_ida_df=ruta_ida_df, ruta_vuelta_df=ruta_vuelta_df,
+                **artefactos_v4_1,
+            )
+
+        df['linea'] = linea_actual
+        all_dfs.append(df)
+
         # Guardar Excel con nombre por convencion
         archivo_excel = os.path.join(
             CARPETA_SALIDA, f'simulacion_{linea_actual}_semana_{semana_str}.xlsx'
@@ -1196,6 +1702,12 @@ def main():
         logger.info("L%d tiempos: min=%.1f min  max=%.1f min  media=%.1f min",
                     linea_actual,
                     tiempos.min() / 60, tiempos.max() / 60, tiempos.mean() / 60)
+
+    if all_dfs:
+        df_all = pd.concat(all_dfs, ignore_index=True)
+        ruta_raw = os.path.join(CARPETA_SALIDA, f'detallado_raw_semana_{semana_str}.csv')
+        df_all.to_csv(ruta_raw, index=False)
+        logger.info("Guardado CSV combinado: %s (%d filas)", ruta_raw, len(df_all))
 
     logger.info("=" * 80)
     logger.info("SIMULACION COMPLETADA — %d lineas", len(LINEAS))
