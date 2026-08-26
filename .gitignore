@@ -30,7 +30,7 @@ ENV/
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# Modelos y datos grandes (no versionar), excepto los artefactos en modelos/
+
 *.pkl
 *.parquet
 *.h5
@@ -42,7 +42,7 @@ ENV/
 !modelos/**/*.hdf5
 !modelos/**/*.lgb
 
-# Resultados generados
+# Resultados generados (pesan demasiado para git, ver GitHub 100MB limit)
 resultados/**/*.csv
 resultados/**/*.xlsx
 resultados/**/*.json
