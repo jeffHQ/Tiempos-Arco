@@ -30,12 +30,17 @@ ENV/
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# Modelos y datos grandes (no versionar)
+# Modelos y datos grandes (no versionar), excepto los artefactos en modelos/
 *.pkl
 *.parquet
 *.h5
 *.hdf5
 *.lgb
+!modelos/**/*.pkl
+!modelos/**/*.parquet
+!modelos/**/*.h5
+!modelos/**/*.hdf5
+!modelos/**/*.lgb
 
 # Resultados generados
 resultados/**/*.csv
