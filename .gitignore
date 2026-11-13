@@ -42,10 +42,19 @@ ENV/
 !modelos/**/*.hdf5
 !modelos/**/*.lgb
 
-# Resultados generados (pesan demasiado para git, ver GitHub 100MB limit)
-resultados/**/*.csv
-resultados/**/*.xlsx
-resultados/**/*.json
+# Resultados generados por la simulacion (se regeneran; pesan demasiado)
+resultados/
+
+# Salidas generadas / datos reales de analisis (el CSV semanal es dato operativo, pesa ~28MB)
+analisis/*.ipynb
+analisis/Semana *.csv
+
+# Cache de herramientas y salidas de asistentes
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.claude/
+graphify-out/
 
 # Logs
 *.log
